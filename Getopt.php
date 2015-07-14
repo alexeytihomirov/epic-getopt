@@ -1,11 +1,53 @@
 <?php
+
 class Getopt implements ArrayAccess
 {
-    public $map = [], $result = [], $arguments = [];
+    public $map = [], $result = [], $arguments = [], $shortOptions;
 
     const VALUE_REQUIRED = ":";
     const VALUE_OPTIONAL = "::";
     const VALUE_NOT_ACCEPT = "";
+
+    public function __construct($shortOptions = "", $longOptions = [])
+    {
+        $shortOptions = trim($shortOptions);
+        if (!preg_match('/^[a-zA-Z0-9:]+$/', $shortOptions)) {
+            throw new \InvalidArgumentException('Invalid short options format');
+        }
+        $shortOptions = preg_replace('/:{3,}/', '::', $shortOptions);
+        $shortOptions = preg_replace('/^:+/', '', $shortOptions);
+
+        $this->shortOptions = $shortOptions;
+        $tokens = [];
+
+        // Add optional short options
+        $shortOptions = preg_replace_callback('/[a-zA-Z0-9]::/', function ($optional) use (&$tokens) {
+            $this->setOption($optional[0][0], '-' . $optional[0][0], self::VALUE_OPTIONAL);
+            return;
+        }, $shortOptions);
+
+        // Add required short options
+        $shortOptions = preg_replace_callback('/[a-zA-Z0-9]:/', function ($optional) use (&$tokens) {
+            $this->setOption($optional[0][0], '-' . $optional[0][0], self::VALUE_REQUIRED);
+            return;
+        }, $shortOptions);
+
+        // Add not accept value short options
+        foreach (str_split($shortOptions) as $option) {
+            $this->setOption($option, '-' . $option, self::VALUE_NOT_ACCEPT);
+        }
+
+        // Add long options
+        foreach ($longOptions as $longOption) {
+            if (preg_match('/^(?<name>[a-zA-Z0-9]+)::$/', $longOption, $match)) {
+                $this->setOption($match['name'], '--' . $match['name'], self::VALUE_OPTIONAL);
+            } elseif (preg_match('/^(?<name>[a-zA-Z0-9]+):$/', $longOption, $match)) {
+                $this->setOption($match['name'], '--' . $match['name'], self::VALUE_REQUIRED);
+            } else {
+                $this->setOption($longOption, '--' . $match['name'], self::VALUE_NOT_ACCEPT);
+            }
+        }
+    }
 
     public function setOption($name, $options, $flag = "", $validate = null)
     {
@@ -49,6 +91,22 @@ class Getopt implements ArrayAccess
             }
         }
         unset($this->arguments[0]);
+
+        // Run validaion
+        foreach ($this->map as $optionItem) {
+            if (!isset($this->result[$optionItem['name']])) {
+                continue;
+            }
+
+            if (is_callable($optionItem['validation'])) {
+                if (!$optionItem['validation']()) {
+                    throw new \UnexpectedValueException('Validation failed for option ' . $optionItem['name']
+                        . ' for value "' . $this->result[$optionItem['name']] . '"');
+                }
+            }
+
+
+        }
         return $this->result;
     }
 
@@ -93,10 +151,8 @@ class Getopt implements ArrayAccess
         unset($this->arguments[$index]);
     }
 
-    protected function setOptValue($key, $value){
-
-        // Add validation
-
+    protected function setOptValue($key, $value)
+    {
         if ($value !== null) {
             if (!isset($this->result[$key])) {
                 $this->result[$key] = $value;
@@ -111,7 +167,7 @@ class Getopt implements ArrayAccess
     protected function parseLong($arg, $index)
     {
         $option = substr($arg, 2);
-        $parsedOpt = explode("=",$option);
+        $parsedOpt = explode("=", $option);
         $name = $parsedOpt[0];
         $val = isset($parsedOpt[1]) ? $parsedOpt[1] : null;
         $value = null;
@@ -133,7 +189,7 @@ class Getopt implements ArrayAccess
                     break;
                 case self::VALUE_OPTIONAL:
                     if (isset($val)) {
-                        if($result = str_replace(['"', "'", "="], "", substr($arg, strlen('--'.$name)))){
+                        if ($result = str_replace(['"', "'", "="], "", substr($arg, strlen('--' . $name)))) {
                             $this->setOptValue($opt['name'], $result);
                         }
                     } else {
@@ -144,7 +200,7 @@ class Getopt implements ArrayAccess
                     throw new InvalidArgumentException('Undefined option type "' . $opt['type'] . '" for "' . $opt['name'] . '"');
                     break;
             }
-        }else{
+        } else {
             return false;
         }
         unset($this->arguments[$index]);
@@ -152,7 +208,7 @@ class Getopt implements ArrayAccess
 
     public function offsetSet($offset, $value)
     {
-        $this->setOptValue($offset,$value);
+        $this->setOptValue($offset, $value);
     }
 
     public function offsetExists($offset)
