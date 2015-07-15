@@ -2,7 +2,7 @@
 
 class Getopt implements ArrayAccess
 {
-    public $map = [], $result = [], $arguments = [], $shortOptions;
+    public $map = [], $result = [], $arguments = [], $mapArguments = [], $shortOptions, $longOptions;
 
     const VALUE_REQUIRED = ":";
     const VALUE_OPTIONAL = "::";
@@ -10,10 +10,13 @@ class Getopt implements ArrayAccess
 
     public function __construct($shortOptions = "", $longOptions = [])
     {
-        $shortOptions = trim($shortOptions);
         if (!preg_match('/^[a-zA-Z0-9:]+$/', $shortOptions)) {
             throw new \InvalidArgumentException('Invalid short options format');
         }
+
+        $shortOptions = trim($shortOptions);
+        $longOptions = $longOptions;
+
         $shortOptions = preg_replace('/:{3,}/', '::', $shortOptions);
         $shortOptions = preg_replace('/^:+/', '', $shortOptions);
 
@@ -22,34 +25,34 @@ class Getopt implements ArrayAccess
 
         // Add optional short options
         $shortOptions = preg_replace_callback('/[a-zA-Z0-9]::/', function ($optional) use (&$tokens) {
-            $this->setOption($optional[0][0], '-' . $optional[0][0], self::VALUE_OPTIONAL);
+            $this->addOption($optional[0][0], '-' . $optional[0][0], self::VALUE_OPTIONAL);
             return;
         }, $shortOptions);
 
         // Add required short options
         $shortOptions = preg_replace_callback('/[a-zA-Z0-9]:/', function ($optional) use (&$tokens) {
-            $this->setOption($optional[0][0], '-' . $optional[0][0], self::VALUE_REQUIRED);
+            $this->addOption($optional[0][0], '-' . $optional[0][0], self::VALUE_REQUIRED);
             return;
         }, $shortOptions);
 
         // Add not accept value short options
         foreach (str_split($shortOptions) as $option) {
-            $this->setOption($option, '-' . $option, self::VALUE_NOT_ACCEPT);
+            $this->addOption($option, '-' . $option, self::VALUE_NOT_ACCEPT);
         }
 
         // Add long options
         foreach ($longOptions as $longOption) {
             if (preg_match('/^(?<name>[a-zA-Z0-9]+)::$/', $longOption, $match)) {
-                $this->setOption($match['name'], '--' . $match['name'], self::VALUE_OPTIONAL);
+                $this->addOption($match['name'], '--' . $match['name'], self::VALUE_OPTIONAL);
             } elseif (preg_match('/^(?<name>[a-zA-Z0-9]+):$/', $longOption, $match)) {
-                $this->setOption($match['name'], '--' . $match['name'], self::VALUE_REQUIRED);
+                $this->addOption($match['name'], '--' . $match['name'], self::VALUE_REQUIRED);
             } else {
-                $this->setOption($longOption, '--' . $match['name'], self::VALUE_NOT_ACCEPT);
+                $this->addOption($longOption, '--' . $match['name'], self::VALUE_NOT_ACCEPT);
             }
         }
     }
 
-    public function setOption($name, $options, $flag = "", $validate = null)
+    public function addOption($name, $options, $flag = "", $validate = null)
     {
         $optionsList = explode(",", $options);
         foreach ($optionsList as $option) {
@@ -62,6 +65,16 @@ class Getopt implements ArrayAccess
                 ];
             }
         }
+
+        return $this;
+    }
+
+    public function addArgument($name, $validate = null)
+    {
+        $this->mapArguments[$name] = [
+            'name' => $name,
+            'validation' => $validate
+        ];
 
         return $this;
     }
@@ -98,15 +111,25 @@ class Getopt implements ArrayAccess
                 continue;
             }
 
-            if (is_callable($optionItem['validation'])) {
-                if (!$optionItem['validation']()) {
-                    throw new \UnexpectedValueException('Validation failed for option ' . $optionItem['name']
-                        . ' for value "' . $this->result[$optionItem['name']] . '"');
-                }
+            if (is_callable($optionItem['validation']) && !$optionItem['validation']()) {
+                throw new \UnexpectedValueException('Validation failed for option ' . $optionItem['name']
+                    . ' for value "' . $this->result[$optionItem['name']] . '"');
             }
 
 
         }
+
+        foreach ($this->mapArguments as $argumentItem) {
+            if (count($this->arguments)) {
+                $argument = array_shift($this->arguments);
+                if (is_callable($argumentItem['validation']) && !$argumentItem['validation']($argument)) {
+                    throw new \UnexpectedValueException('Validation failed of argument "' . $argumentItem['name']
+                        . '" for value "' . $argument . '"');
+                }
+                $this->result[$argumentItem['name']] = $argument;
+            }
+        }
+
         return $this->result;
     }
 
